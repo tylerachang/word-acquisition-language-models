@@ -1,0 +1,9 @@
+{
+  "rnn_cell": "LSTM",
+  "embedding_size": 768,
+  "hidden_sizes": [768, 768, 768],
+  "dropout": 0.1,
+  "emb_tied": "standard",
+  "rnn_mode": "forward",
+  "max_seq_len": 128
+}

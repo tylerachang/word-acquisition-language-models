@@ -1,0 +1,713 @@
+---
+title: "tacl_analyses"
+output: html_document
+---
+
+```{r define_functions, include=FALSE}
+
+library(ggplot2)
+library(plyr)
+library(dplyr)
+library(tidyr)
+library(scales)
+library(stats)
+library(stringr)
+library(lmtest)
+library(gridExtra)
+library(car)
+library(cowplot)
+
+
+# Offset a sigmoid function with a lower asymptote, possibly flipping to be increasing or decreasing.
+offset_logit <- function(x, upper, lower, xmid, scale, increasing=TRUE) {
+  if(increasing) {
+    return(lower + SSlogis(x, upper-lower, xmid, scale))
+  } else {
+    return(upper - SSlogis(x, upper-lower, xmid, scale))
+  }
+}
+# Run a sigmoid regression.
+# Can either return the residuals after the regression, or the parameters of the fitted sigmoid.
+# Includes an option to just use the default sigmoid function.
+sigmoid_regression <- function(x, y, return_residuals=TRUE, increasing=TRUE, use_default=FALSE) {
+  df <- data.frame(x,y)
+  df <- setNames(df, c("X", "Y"))
+  reg <- NULL
+  if(use_default) {
+    # Use default sigmoid and parameters.
+    reg <- nls(Y~SSlogis(X, upper, xmid, scale),
+    data=df, control=nls.control(maxiter = 50000, minFactor=1e-12))
+  } else {
+    # Use custom initializations and parameters.
+    # Includes an additional lower asymptote term, and allows increasing or decreasing sigmoids.
+    # Runs with multiple initializations until convergence.
+    x_range <- max(df$X) - min(df$X)
+    start_mid <- min(df$X) + x_range*0.2 # Range from 0.2 to 0.8 of the total range.
+    attempt <- 0
+    # This environment is used to store whether the regression is completed.
+    # Accessed within the error functions.
+    env=new.env()
+    assign("completed_regression", FALSE, env=env)
+    while(!get("completed_regression", env=env) & attempt < 20) {
+      attempt <- attempt + 1
+      start_mid <- start_mid + x_range*0.03 # Total range of 0.6*x_range.
+      tryCatch(
+        expr = {
+          # Custom initialization.
+          start <- list(upper=max(df$Y), lower=min(df$Y), xmid=start_mid, scale=x_range/50.0)
+          reg <- nls(Y~offset(offset_logit(X, upper, lower, xmid, scale, increasing=increasing)),
+                     start = start,
+                     data=df, control=nls.control(maxiter = 50000, minFactor=1e-12))
+          assign("completed_regression", TRUE, env=env)
+        }, error = function(e) {
+          if(grepl("iterations", e$message)) {
+            # Print a warning that the maximum number of iterations was reached, but
+            # consider this regression completed.
+            print("Warning: reached maximum iterations!")
+            assign("completed_regression", TRUE, env=env)
+          }
+        }
+      )
+    }
+    if(attempt >= 20 & !get("completed_regression", env=env)) {
+      print("Error: maximum attempts reached.")
+    }
+    # Rerun to obtain the regression with the most recent initial values.
+    reg <- nls(Y~offset(offset_logit(X, upper, lower, xmid, scale, increasing=increasing)),
+               start = start,
+               data=df, control=nls.control(maxiter = 50000, minFactor=1e-12, warnOnly=TRUE))
+  }
+  if(return_residuals) {
+    return(residuals(reg))
+  } else {
+    coeffs <- coef(summary(reg))[,1]
+    upper <- coeffs[1]
+    lower <- coeffs[2]
+    xmid <- coeffs[3]
+    scale <- coeffs[4]
+    return(c(upper, lower, xmid, scale))
+  }
+}
+
+
+# Check the sign of a coefficient for a linear regression.
+get_coeff_sign <- function(linear_reg, field="", sig_level=0.05) {
+  coeffs <- coef(summary(linear_reg))
+  if (coeffs[field,"Pr(>|t|)"] < sig_level) {
+    return(ifelse(coeffs[field,"Estimate"] > 0, 1, -1))
+  } else {
+    return(0)
+  }
+}
+
+
+# Get LM dataframes.
+get_lm_surprisal_df <- function(surprisal_file) {
+  lm_surprisal_df <- read.delim(surprisal_file, quote="", encoding="UTF-8")
+  lm_surprisal_df <- lm_surprisal_df %>% filter(substr(lm_surprisal_df$Token, 1, 1) == '\U2581')
+  lm_surprisal_df$Token <- sub('\U2581', '', lm_surprisal_df$Token)
+  lm_surprisal_df$Token <- as.factor(lm_surprisal_df$Token)
+  return(lm_surprisal_df)
+}
+get_lm_aoa_df <- function(aoa_file, lm_data_stats_file="") {
+  lm_aoa_df <- read.delim(aoa_file, quote="", encoding="UTF-8")
+  lm_aoa_df$Token <- as.factor(lm_aoa_df$Token)
+  if (lm_data_stats_file != "") {
+    # Add additional fields.
+    lm_stats_df <- read.table(file=lm_data_stats_file, encoding="UTF-8",
+                              header=TRUE, sep="\t", fill=TRUE, quote="")
+    lm_stats_df <- lm_stats_df %>% filter(substr(lm_stats_df$Token, 1, 1) == '\U2581')
+    lm_stats_df$Token <- sub('\U2581', '', lm_stats_df$Token)
+    lm_stats_df <- setNames(lm_stats_df, c("Token", "LmFreq", "LmMLU", "LmUniMLU"))
+    lm_stats_df$LmLogFreq <- log(lm_stats_df$LmFreq)
+    lm_aoa_df <- merge(lm_aoa_df, lm_stats_df, by.x="Token", by.y="Token")
+  }
+  return(lm_aoa_df)
+}
+
+
+# Fit sigmoids to LM data.
+# The data file should be a TSV where each row contains at least Steps, Token, and MeanSurprisal.
+fit_lm_sigmoids <- function(surprisal_file, outfile) {
+  lm_surprisal_df <- get_lm_surprisal_df(surprisal_file)
+  lm_sigmoid_df <- data.frame()
+  for (token in levels(lm_surprisal_df$Token)) {
+    cat(token, "\t")
+    scores <- lm_surprisal_df %>% filter(lm_surprisal_df$Token == token)
+    sigmoid_params <- sigmoid_regression(log10(scores$Steps), scores$MeanSurprisal,
+                                         return_residuals=FALSE, increasing=FALSE)
+    upper <- sigmoid_params[1]
+    lower <- sigmoid_params[2]
+    xmid <- sigmoid_params[3]
+    scale <- sigmoid_params[4]
+    min_surprisal = min(scores$MeanSurprisal)
+    max_surprisal = max(scores$MeanSurprisal)
+    lm_sigmoid_df <- rbind(lm_sigmoid_df, list(token, max_surprisal, min_surprisal,
+                                               upper, lower, xmid, scale), stringsAsFactors = FALSE)
+  }
+  lm_sigmoid_df <- setNames(lm_sigmoid_df, c("Token", "MaxSurprisal", "MinSurprisal",
+                                             "ParamUpper", "ParamLower", "ParamXmid", "ParamScale"))
+  write.table(lm_sigmoid_df, file=outfile, quote=FALSE, sep='\t',
+              fileEncoding="UTF-8", row.names=FALSE)
+}
+
+
+# Get AoA from fitted sigmoid data.
+# The data file should be the file outputted by the fit_lm_sigmoids function.
+# The AoA type can be: default (random chance as initial baseline, minimum surprisal as final),
+# max_surprisal (max surprisal as initial baseline),
+# or midpoint (midpoint of the fitted sigmoid).
+get_lm_aoa <- function(sigmoid_file, outfile, cutoff_proportion=0.50, aoa_type="default") {
+  n_tokens <- 30004 # Total number of tokens, for defining the random chance baseline.
+  max_step <- 1000000
+  min_step <- 100
+  # Read sigmoids data file.
+  lm_sigmoid_df <- read.delim(sigmoid_file, quote="", encoding="UTF-8")
+  lm_sigmoid_df$Token <- as.factor(lm_sigmoid_df$Token)
+  lm_aoa_df <- data.frame()
+  initial_baseline <- -log2(1.0/n_tokens) # Default random chance baseline.
+  for (token in levels(lm_sigmoid_df$Token)) {
+    min_surprisal <- lm_sigmoid_df$MinSurprisal[lm_sigmoid_df$Token == token]
+    max_surprisal <- lm_sigmoid_df$MaxSurprisal[lm_sigmoid_df$Token == token]
+    upper <- lm_sigmoid_df$ParamUpper[lm_sigmoid_df$Token == token]
+    lower <- lm_sigmoid_df$ParamLower[lm_sigmoid_df$Token == token]
+    xmid <- lm_sigmoid_df$ParamXmid[lm_sigmoid_df$Token == token]
+    scale <- lm_sigmoid_df$ParamScale[lm_sigmoid_df$Token == token]
+    if (aoa_type == "midpoint") {
+      aoa <- xmid
+      cutoff <- (upper+lower)/2
+    } else {
+      if (aoa_type == "max_surprisal") {
+        initial_baseline <- max_surprisal
+      }
+      final_baseline <- min_surprisal
+      cutoff <- initial_baseline*(1-cutoff_proportion) + final_baseline*cutoff_proportion
+      # Check if the cutoff has lower surprisal than entire curve,
+      # or the initial baseline has lower surprisal than the final baseline,
+      # or the surprisal is increasing instead of decreasing.
+      if ((cutoff <= lower & cutoff <= upper) |
+          (initial_baseline <= final_baseline) |
+          (upper < lower & scale > 0) | (upper > lower & scale < 0)) {
+        aoa <- log10(max_step)
+        print("Adjusted to max step.")
+      } else if (cutoff >= upper & cutoff >= lower) {
+        # Cutoff has higher surprisal than entire curve.
+        aoa <- log10(min_step)
+        print("Adjusted to min step.")
+      } else {
+        aoa <- (xmid-log((upper-lower)/(upper-cutoff)-1)*scale)
+      }
+    }
+    aoa <- min(aoa, log10(max_step))
+    aoa <- max(aoa, log10(min_step))
+    lm_aoa_df <- rbind(lm_aoa_df, list(token, aoa, cutoff, max_surprisal, min_surprisal,
+                                       upper, lower, xmid, scale), stringsAsFactors = FALSE)
+  }
+  lm_aoa_df <- setNames(lm_aoa_df, c("Token", "LmAoA", "LmCutoff", "MaxSurprisal", "MinSurprisal",
+                                     "ParamUpper", "ParamLower", "ParamXmid", "ParamScale"))
+  write.table(lm_aoa_df, file=outfile, quote=FALSE, sep='\t',
+              fileEncoding="UTF-8", row.names=FALSE)
+}
+
+
+# Get child dataframes.
+get_child_proportion_df <- function(proportion_file) {
+  child_proportion_df <- read.csv(file=proportion_file)
+  child_proportion_df <- child_proportion_df %>% gather(Month, Proportion, X16:X30)
+  child_proportion_df$Month <- as.numeric(sub('X', '', child_proportion_df$Month))
+  child_proportion_df$definition <- as.factor(child_proportion_df$definition)
+  child_proportion_df <- child_proportion_df %>% dplyr::select(definition, Month, Proportion)
+  child_proportion_df <- setNames(child_proportion_df, c("Token", "Month", "Proportion"))
+  # Note: these tokens are not cleaned, so some may not be the same as the smooth child AoA data.
+  # This is okay for now because this data is only used to generate plots.
+  return(child_proportion_df)
+}
+get_child_aoa_df <- function(aoa_file, childes_file="") {
+  child_aoa_df <- read.table(file=aoa_file,
+                             encoding="UTF-8", header=TRUE, sep="\t", fill=TRUE, quote="")
+  child_aoa_df$language <- as.factor(child_aoa_df$language)
+  child_aoa_df <- child_aoa_df %>% filter(child_aoa_df$language == "English (American)" &
+                                          child_aoa_df$measure == "produces")
+  # Get info about each word.
+  # Note: UniLemma is only relevant for multilingual analyses.
+  word_info_df <- child_aoa_df %>% dplyr::select(CleanedSingle, lexical_class, uni_lemma)
+  word_info_df <- setNames(word_info_df, c("Token", "LexicalClass", "UniLemma"))
+  word_info_df$LexicalClass <- as.factor(word_info_df$LexicalClass)
+  word_info_df$UniLemma <- stringr::word(word_info_df$UniLemma, 1)
+  word_info_df$NChars <- nchar(word_info_df$Token)
+  word_info_df <- unique(word_info_df)
+  # Get AoA for each word.
+  child_aoa_df <- child_aoa_df %>% dplyr::select(CleanedSingle, aoa)
+  # For AoA, average over all data for each token/word.
+  child_aoa_df <- unique(child_aoa_df) # Remove duplicates.
+  child_aoa_df <- aggregate(child_aoa_df$aoa, by=list(child_aoa_df$CleanedSingle), FUN=mean)
+  child_aoa_df <- setNames(child_aoa_df, c("Token", "ChildAoA"))
+  child_aoa_df$Token <- as.factor(child_aoa_df$Token)
+  child_aoa_df <- merge(child_aoa_df, word_info_df, by.x="Token", by.y="Token")
+  if (childes_file != "") {
+    # Add additional fields from CHILDES.
+    childes_df <- read.table(file=childes_file, encoding="UTF-8",
+                             header=TRUE, sep="\t", fill=TRUE, quote="")
+    childes_df <- childes_df %>% dplyr::select(word, word_count, mean_sent_length)
+    childes_df <- setNames(childes_df, c("Token", "ChildesCount", "ChildMLU"))
+    childes_df$Token <- tolower(childes_df$Token)
+    childes_df <- childes_df %>% filter(childes_df$Token != '')
+    total_childes_tokens <- sum(childes_df$ChildesCount)
+    childes_df$ChildFreq <- (childes_df$ChildesCount*1000.0)/total_childes_tokens
+    childes_df$ChildLogFreq <- log(childes_df$ChildFreq)
+    child_aoa_df <- merge(child_aoa_df, childes_df, by.x="Token", by.y="Token")
+  }
+  return(child_aoa_df)
+}
+
+
+# Add concreteness data to a dataframe.
+add_concreteness <- function(original_df, concreteness_file, merge_field="Token") {
+  concreteness_df <- read.table(file=concreteness_file, encoding="UTF-8",
+                                header=TRUE, sep="\t", fill=TRUE, quote="")
+  concreteness_df <- concreteness_df %>% dplyr::select(Word, Conc.M)
+  concreteness_df <- setNames(concreteness_df, c("Token", "Concreteness"))
+  original_df <- merge(original_df, concreteness_df, by.x=merge_field, by.y="Token", all.x=TRUE)
+  # cat("  Imputing ", sum(is.na(original_df$Concreteness)), " concreteness values.\n", sep="")
+  original_df$Concreteness[is.na(original_df$Concreteness)] <-
+    mean(original_df$Concreteness, na.rm=TRUE) # Replace NA.
+  return(original_df)
+}
+
+
+# Plot word curves.
+# Requires the surprisal/proportion files and the AoA files.
+# Prefer to output pdfs.
+plot_word_curve <- function(word, outfile, lm_surprisal_file="", lm_aoa_file="",
+                            child_proportion_file="", child_aoa_file="",
+                            lm_curve=TRUE, child_curve=TRUE, include_lm_unigram_surprisal=FALSE,
+                            lm_model_string="", lm_data_stats_file="") {
+  if (child_curve) {
+    child_proportion_df <- get_child_proportion_df(child_proportion_file)
+    child_aoa_df <- get_child_aoa_df(child_aoa_file)
+    word_proportion_df <- child_proportion_df %>% filter(child_proportion_df$Token == word)
+    child_aoa <- child_aoa_df$ChildAoA[child_aoa_df$Token == word]
+    child_max <- max(word_proportion_df$Proportion)
+    child_plot <- ggplot(word_proportion_df, aes(x=Month, y=Proportion)) +
+      theme_bw() + geom_line(size=0.5, alpha=0.75) + geom_hline(yintercept=0.5, color="blue") +
+      xlab("Child months") + ylab("Proportion learned") +
+      geom_point(aes(x=child_aoa, y=0.50), colour="red") +
+      annotate("text", x=15, y=child_max-0.07, label=paste('"', word, '"', sep=""),
+               color="mediumseagreen", size=4, hjust=0, vjust=0)
+    ggsave(file=outfile, plot=child_plot, width=2, height=2)
+  }
+  if (lm_curve) {
+    lm_surprisal_df <- get_lm_surprisal_df(lm_surprisal_file)
+    lm_aoa_df <- get_lm_aoa_df(lm_aoa_file, lm_data_stats_file=lm_data_stats_file)
+    word_surprisal_df <- lm_surprisal_df %>% filter(lm_surprisal_df$Token == word)
+    lm_best <- min(word_surprisal_df$MeanSurprisal)
+    lm_word_df <- lm_aoa_df %>% filter(lm_aoa_df$Token == word)
+    if (include_lm_unigram_surprisal) {
+      # Count per thousand converted to surprisal.
+      lm_unigram_surprisal <- -1*log(lm_word_df$LmFreq/1000.0, 2)
+    }
+    lm_cutoff <- lm_word_df$LmCutoff
+    upper <- lm_word_df$ParamUpper
+    lower <- lm_word_df$ParamLower
+    xmid <- lm_word_df$ParamXmid
+    scale <- lm_word_df$ParamScale
+    lm_plot <- ggplot(word_surprisal_df, aes(x=log10(Steps), y=MeanSurprisal)) +
+      theme_bw() + geom_hline(yintercept=lm_cutoff, color="blue") +
+      xlab(paste(lm_model_string, " steps (log10)", sep="")) +
+      ylab("Mean surprisal") + scale_y_continuous(trans = "reverse") +
+      geom_function(fun = function(x) offset_logit(x, upper, lower, xmid, scale, increasing=FALSE),
+                    color="blue") + geom_line(size=0.4, alpha=0.75) +
+      geom_point(aes(x=lm_word_df$LmAoA, y=lm_cutoff), colour="red") +
+      annotate("text", x=2, y=lm_best+1, label=paste('"', word, '"', sep=""),
+               color="mediumseagreen", size=4, hjust=0, vjust=0)
+    if (include_lm_unigram_surprisal) {
+      lm_unigram_surprisal <- -log2(lm_word_df$LmFreq/1000.0)
+      lm_plot <- lm_plot + geom_hline(yintercept=lm_unigram_surprisal, color="mediumseagreen",
+                                      linetype="longdash")
+    }
+    ggsave(file=outfile, plot=lm_plot, width=2, height=2)
+  }
+  if (child_curve & lm_curve) {
+    plot <- grid.arrange(lm_plot, child_plot, ncol=2)
+    ggsave(file=outfile, plot=plot, width=4, height=2)
+  }
+}
+
+
+# Run the linear regressions AoA analysis.
+# For convenience, returns the dataframe of predictors and AoA data.
+run_regressions <- function(is_lm=TRUE, child_aoa_file="", childes_file="",
+                            concreteness_file="", lm_aoa_file="", lm_data_stats_file="",
+                            print_analyses=FALSE, quadratic_logfreq=FALSE) {
+  quadratic <- function(formula) { # Add a quadratic log-frequency term to the formula.
+    return(str_replace_all(formula, "LogFreq", "poly(LogFreq,2)"))
+  }
+  # The child data is required to obtain lexical class data.
+  child_aoa_df <- get_child_aoa_df(child_aoa_file, childes_file=childes_file)
+  regression_df <- data.frame()
+  if (is_lm) {
+    lm_aoa_df <- get_lm_aoa_df(lm_aoa_file, lm_data_stats_file=lm_data_stats_file)
+    combined_aoa_df <- merge(lm_aoa_df, child_aoa_df, by.x="Token", by.y="Token")
+    regression_df <- combined_aoa_df %>% dplyr::select(
+      Token, LmAoA, LmLogFreq, LmMLU, NChars, LexicalClass)
+  } else {
+    regression_df <- child_aoa_df %>% dplyr::select(
+      Token, ChildAoA, ChildLogFreq, ChildMLU, NChars, LexicalClass)
+  }
+  regression_df <- setNames(regression_df,
+                            c("Token", "AoA", "LogFreq", "MLU", "NChars", "LexicalClass"))
+  regression_df <- add_concreteness(regression_df, concreteness_file)
+  
+  # Correlations.
+  if (print_analyses) {
+    cat("  Correlations:\n")
+    corr_df <- regression_df %>% dplyr::select(LogFreq, NChars, Concreteness, MLU)
+    print(cor(corr_df, method="pearson"))
+    cat("\n")
+  }
+  
+  # Log-frequency alone regression.
+  formula_logfreq <- "AoA ~ LogFreq"
+  if (quadratic_logfreq) { formula_logfreq <- quadratic(formula_logfreq) }
+  logfreq_reg <- lm(formula_logfreq, data=regression_df)
+  cat("  LogFreq R^2: ", summary(logfreq_reg)$adj.r.squared, "\n", sep="")
+  
+  # Run regressions.
+  predictors <- c("LogFreq", "MLU", "NChars", "Concreteness", "LexicalClass")
+  formula_predictors <- paste(predictors, collapse=" + ")
+  formula_with_predictor <- paste("AoA ~ ", formula_predictors, sep="")
+  if (quadratic_logfreq) { formula_with_predictor <- quadratic(formula_with_predictor) }
+  reg_with_predictor <- lm(formula_with_predictor, data=regression_df)
+  if (print_analyses) {
+    cat("  VIFs:\n")
+    print(vif(reg_with_predictor))
+    cat("\n")
+  }
+  cat("  Overall R^2: ", summary(reg_with_predictor)$adj.r.squared, "\n", sep="")
+  for (predictor in predictors) {
+    if (predictor=="LogFreq" & quadratic_logfreq) { next } # Skip log-frequency in this case.
+    # Run LRT.
+    formula_predictors <- paste(setdiff(predictors, c(predictor)), collapse=" + ")
+    formula_without_predictor <- paste("AoA ~ ", formula_predictors, sep="")
+    if (quadratic_logfreq) { formula_without_predictor <- quadratic(formula_without_predictor) }
+    reg_without_predictor <- lm(formula_without_predictor, data=regression_df)
+    lrt <- lrtest(reg_with_predictor, reg_without_predictor)
+    lrt_p <- lrt$'Pr(>Chisq)'[-1]
+    coeff_sign <- "ns" # Do not consider coefficient sign if the LRT was not significant.
+    if (lrt_p < 0.05) {
+      coeff_sign <- "na" # Significant LRT but NA coefficient.
+      if (predictor == "LexicalClass") {
+        # Run ANCOVA.
+        posthoc_df <- regression_df
+        logfreq_reg <- lm(AoA ~ LogFreq, data=posthoc_df)
+        posthoc_df$AdjustedAoA <- residuals(logfreq_reg)
+        anova <- aov(AdjustedAoA ~ LexicalClass, data=posthoc_df)
+        anova_p <- summary(anova)[[1]][["Pr(>F)"]][[1]]
+        if (anova_p < 0.05) {
+          # RUN POST-HOC TUKEY HSD:
+          tukey <- TukeyHSD(anova)
+          if (print_analyses) { print(tukey) }
+        } else {
+          cat("    ANOVA not significant (p=", anova_p, ") for:\n", sep="")
+        }
+      } else if (predictor == "LogFreq") {
+        coeff_sign <- get_coeff_sign(reg_with_predictor, predictor)
+      } else {
+        coeff_sign <- get_coeff_sign(reg_with_predictor, predictor, sig_level=0.05)
+        # Check that the sign is consistent with the sign in the single predictor regression.
+        posthoc_df <- regression_df
+        predictor_formula <- paste(predictor, " ~ LogFreq", sep="")
+        if (quadratic_logfreq) { predictor_formula <- quadratic(predictor_formula) }
+        predictor_reg <- lm(predictor_formula, data=posthoc_df)
+        posthoc_df$AdjustedPredictor <- residuals(predictor_reg)
+        posthoc_reg <- lm(AoA ~ AdjustedPredictor, data=posthoc_df)
+        single_coeff_sign <- get_coeff_sign(posthoc_reg, "AdjustedPredictor", sig_level=1.0)
+        if (coeff_sign != single_coeff_sign) {
+          cat("    Different single predictor sign (", single_coeff_sign, ") for:\n", sep="")
+        }
+      }
+    }
+    # This prints the LRT p-value and the sign of the coefficient in the full regression.
+    cat("    ", predictor, ": ", lrt_p, " (", coeff_sign, ")\n", sep="")
+  }
+}
+
+
+```
+
+```{r fit_lm_sigmoids, include=FALSE}
+
+for (model in c("lstm", "bilstm", "gpt2", "bert")) {
+  cat("Running ", model, "...\n", sep="")
+  cat("Fitting sigmoids...\n")
+  surprisal_file <- paste("tacl_data/lm_data/", model, "_surprisals.txt", sep="")
+  sigmoid_file <- paste("tacl_data/lm_data/processed/", model, "_sigmoids.txt", sep="")
+  fit_lm_sigmoids(surprisal_file, sigmoid_file)
+
+  cat("Getting AoA...\n")
+  aoa_file <- paste("tacl_data/lm_data/processed/", model, "_aoa.txt", sep="")
+  get_lm_aoa(sigmoid_file, aoa_file)
+  
+  cat("Getting max surprisal AoA...\n")
+  aoa_file <- paste("tacl_data/lm_data/processed/", model, "_aoa_max_surprisal.txt", sep="")
+  get_lm_aoa(sigmoid_file, aoa_file, aoa_type="max_surprisal")
+  
+  cat("Getting midpoint AoA...\n")
+  aoa_file <- paste("tacl_data/lm_data/processed/", model, "_aoa_midpoint.txt", sep="")
+  get_lm_aoa(sigmoid_file, aoa_file, aoa_type="midpoint")
+}
+
+# Get AoA using different threshold proportions.
+for (model in c("lstm", "bilstm", "gpt2", "bert")) {
+  cat("Running ", model, "...\n", sep="")
+  sigmoid_file <- paste("tacl_data/lm_data/processed/", model, "_sigmoids.txt", sep="")
+    aoa_file <- paste("tacl_data/lm_data/processed/thresholds/", model, "_aoa_010.txt", sep="")
+  get_lm_aoa(sigmoid_file, aoa_file, cutoff_proportion=0.10)
+  aoa_file <- paste("tacl_data/lm_data/processed/thresholds/", model, "_aoa_020.txt", sep="")
+  get_lm_aoa(sigmoid_file, aoa_file, cutoff_proportion=0.20)
+    aoa_file <- paste("tacl_data/lm_data/processed/thresholds/", model, "_aoa_030.txt", sep="")
+  get_lm_aoa(sigmoid_file, aoa_file, cutoff_proportion=0.30)
+  aoa_file <- paste("tacl_data/lm_data/processed/thresholds/", model, "_aoa_040.txt", sep="")
+  get_lm_aoa(sigmoid_file, aoa_file, cutoff_proportion=0.40)
+    aoa_file <- paste("tacl_data/lm_data/processed/thresholds/", model, "_aoa_050.txt", sep="")
+  get_lm_aoa(sigmoid_file, aoa_file, cutoff_proportion=0.50)
+  aoa_file <- paste("tacl_data/lm_data/processed/thresholds/", model, "_aoa_060.txt", sep="")
+  get_lm_aoa(sigmoid_file, aoa_file, cutoff_proportion=0.60)
+    aoa_file <- paste("tacl_data/lm_data/processed/thresholds/", model, "_aoa_070.txt", sep="")
+  get_lm_aoa(sigmoid_file, aoa_file, cutoff_proportion=0.70)
+  aoa_file <- paste("tacl_data/lm_data/processed/thresholds/", model, "_aoa_080.txt", sep="")
+  get_lm_aoa(sigmoid_file, aoa_file, cutoff_proportion=0.80)
+    aoa_file <- paste("tacl_data/lm_data/processed/thresholds/", model, "_aoa_090.txt", sep="")
+  get_lm_aoa(sigmoid_file, aoa_file, cutoff_proportion=0.90)
+}
+
+rm(surprisal_file, sigmoid_file, aoa_file, model)
+
+```
+
+```{r word_plots, include=FALSE}
+
+surprisal_file <- "tacl_data/lm_data/bert_surprisals.txt"
+lm_aoa_file <- "tacl_data/lm_data/processed/bert_aoa.txt"
+proportion_file <- "tacl_data/child_data/child_american_english_proportions.csv"
+child_aoa_file <- "tacl_data/child_data/child_aoa.tsv"
+plot_word_curve("walk", "tacl_data/figures/walk_bert_child.pdf",
+                lm_surprisal_file=surprisal_file, lm_aoa_file=lm_aoa_file,
+                child_proportion_file=proportion_file, child_aoa_file=child_aoa_file,
+                lm_curve=TRUE, child_curve=TRUE, include_lm_unigram_surprisal=FALSE,
+                lm_model_string="BERT")
+
+# Curves for "eat".
+word <- "eat"
+for (model in c("LSTM", "BiLSTM", "GPT-2", "BERT")) {
+  lower_model <- str_replace(tolower(model), "-", "")
+  surprisal_file <- paste("tacl_data/lm_data/", lower_model, "_surprisals.txt", sep="")
+  lm_aoa_file <- paste("tacl_data/lm_data/processed/", lower_model, "_aoa.txt", sep="")
+  plot_word_curve(word, paste("tacl_data/figures/", word, "_", lower_model, ".pdf", sep=""),
+                  lm_surprisal_file=surprisal_file, lm_aoa_file=lm_aoa_file,
+                  lm_curve=TRUE, child_curve=FALSE, include_lm_unigram_surprisal=FALSE,
+                  lm_model_string=model)
+}
+
+# LSTM curves with unigram surprisal lines.
+model <- "LSTM"
+lower_model <- "lstm"
+lm_data_stats_file <- "tacl_data/lm_data/lm_data_stats.txt"
+surprisal_file <- paste("tacl_data/lm_data/", lower_model, "_surprisals.txt", sep="")
+lm_aoa_file <- paste("tacl_data/lm_data/processed/", lower_model, "_aoa.txt", sep="")
+for (word in c("for", "eat", "drop", "lollipop")) {
+  plot_word_curve(word, paste("tacl_data/figures/", word, "_", lower_model, "_line.pdf", sep=""),
+                  lm_surprisal_file=surprisal_file, lm_aoa_file=lm_aoa_file,
+                  lm_curve=TRUE, child_curve=FALSE, include_lm_unigram_surprisal=TRUE,
+                  lm_model_string=model, lm_data_stats_file=lm_data_stats_file)
+  
+}
+
+rm(word, model, lower_model, lm_data_stats_file, surprisal_file, lm_aoa_file,
+   proportion_file, child_aoa_file)
+
+```
+
+```{r regressions, include=TRUE}
+
+child_aoa_file <- "tacl_data/child_data/child_aoa.tsv"
+childes_file <- "tacl_data/child_data/childes_eng-na.tsv"
+concreteness_file <- "tacl_data/concreteness_data.tsv"
+cat("child:\n")
+run_regressions(is_lm=FALSE, child_aoa_file=child_aoa_file, childes_file=childes_file,
+                concreteness_file=concreteness_file, quadratic_logfreq=FALSE)
+
+lm_data_stats_file <- "tacl_data/lm_data/lm_data_stats.txt"
+for (model in c("lstm", "bilstm", "gpt2", "bert")) {
+  cat(model, ":\n", sep="")
+  lm_aoa_file <- paste("tacl_data/lm_data/processed/", model, "_aoa.txt", sep="")
+  run_regressions(is_lm=TRUE, child_aoa_file=child_aoa_file, childes_file=childes_file,
+                  concreteness_file=concreteness_file, lm_aoa_file=lm_aoa_file,
+                  lm_data_stats_file=lm_data_stats_file, print_analyses=FALSE,
+                  quadratic_logfreq=FALSE)
+}
+
+rm(model, child_aoa_file, childes_file, concreteness_file,
+   lm_data_stats_file, lm_aoa_file)
+
+```
+
+```{r alternative_aoa}
+
+cat("Random chance surprisal:", -log2(1.0/30004), "\n")
+for (model in c("lstm", "bilstm", "gpt2", "bert")) {
+  cat("\n", model, "\n", sep="")
+  aoa_file <- paste("tacl_data/lm_data/processed/", model, "_aoa_midpoint.txt", sep="")
+  lm_aoa_df <- get_lm_aoa_df(aoa_file, lm_data_stats_file="")
+  cat("Tokens with minimum or maximum AoA:",
+      sum(lm_aoa_df$LmAoA == 2.0 | lm_aoa_df$LmAoA == 6.0), "\n")
+  cat("Minimum low surprisal:", min(lm_aoa_df$ParamLower), "\n")
+  cat("Maximum high surprisal:", max(lm_aoa_df$ParamUpper), "\n")
+}
+
+rm(model, aoa_file, lm_aoa_df)
+
+```
+
+```{r first_last_words}
+
+cat("LMs:\n")
+lm_data_stats_file <- "tacl_data/lm_data/lm_data_stats.txt"
+first_tokens <- NULL
+last_tokens <- NULL
+for (model in c("lstm", "bilstm", "gpt2", "bert")) {
+  aoa_file <- paste("tacl_data/lm_data/processed/", model, "_aoa.txt", sep="")
+  lm_aoa_df <- get_lm_aoa_df(aoa_file, lm_data_stats_file=lm_data_stats_file)
+  lm_tokens <- levels(lm_aoa_df$Token)
+  threshold <- quantile(lm_aoa_df$LmAoA, 0.05)
+  model_tokens <- lm_aoa_df$Token[lm_aoa_df$LmAoA < threshold]
+  model_tokens <- levels(model_tokens)[model_tokens]
+  if (is.null(first_tokens)) { first_tokens <- model_tokens } else {
+    first_tokens <- intersect(first_tokens, model_tokens)
+  }
+  threshold <- quantile(lm_aoa_df$LmAoA, 0.95)
+  model_tokens <- lm_aoa_df$Token[lm_aoa_df$LmAoA > threshold]
+  model_tokens <- levels(model_tokens)[model_tokens]
+  if (is.null(last_tokens)) { last_tokens <- model_tokens } else {
+    last_tokens <- intersect(last_tokens, model_tokens)
+  }
+}
+lm_aoa_df$FreqPercentile <- ntile(lm_aoa_df$LmLogFreq, n=100)
+cat("First:", first_tokens, "\n")
+cat("Freq percentiles:", lm_aoa_df$FreqPercentile[lm_aoa_df$Token %in% first_tokens], "\n")
+cat("Last:", last_tokens, "\n")
+cat("Freq percentiles:", lm_aoa_df$FreqPercentile[lm_aoa_df$Token %in% last_tokens], "\n")
+
+
+cat("\nChildren:\n")
+child_aoa_file <- "tacl_data/child_data/child_aoa.tsv"
+childes_file <- "tacl_data/child_data/childes_eng-na.tsv"
+child_aoa_df <- get_child_aoa_df(child_aoa_file, childes_file=childes_file)
+threshold <- quantile(child_aoa_df$ChildAoA, 0.02)
+first_tokens <- child_aoa_df$Token[child_aoa_df$ChildAoA < threshold]
+first_tokens <- levels(first_tokens)[first_tokens]
+first_tokens <- intersect(first_tokens, lm_tokens)
+threshold <- quantile(child_aoa_df$ChildAoA, 0.98)
+last_tokens <- child_aoa_df$Token[child_aoa_df$ChildAoA > threshold]
+last_tokens <- levels(last_tokens)[last_tokens]
+last_tokens <- intersect(last_tokens, lm_tokens)
+child_aoa_df$FreqPercentile <- ntile(child_aoa_df$ChildLogFreq, n=100)
+cat("First:", first_tokens, "\n")
+cat("Freq percentiles:", child_aoa_df$FreqPercentile[child_aoa_df$Token %in% first_tokens], "\n")
+cat("Last:", last_tokens, "\n")
+cat("Freq percentiles:", child_aoa_df$FreqPercentile[child_aoa_df$Token %in% last_tokens], "\n")
+
+# Print words not considered one token by the LMs.
+# cat(setdiff(levels(child_aoa_df$Token), lm_tokens))
+
+rm(model, lm_data_stats_file, first_tokens, last_tokens, aoa_file, lm_aoa_df, lm_tokens,
+   threshold, model_tokens, child_aoa_file, childes_file, child_aoa_df)
+
+```
+
+```{r additional_plots}
+
+# Evaluation loss plot.
+loss_df <- data.frame()
+for (model in c("LSTM", "BiLSTM", "GPT-2", "BERT")) {
+  lower_model <- str_replace(tolower(model), "-", "")
+  model_loss_df <- read.delim(paste("tacl_data/lm_data/", lower_model, "_log.txt", sep=""),
+                                      quote="", encoding="UTF-8")
+  model_loss_df$Model <- model
+  loss_df <- rbind(loss_df, model_loss_df, stringsAsFactors = TRUE)
+}
+colors <- c("BERT" = "darkred", "GPT-2" = "steelblue",
+            "LSTM" = "mediumseagreen", "BiLSTM" = "black")
+linetypes <- c("BERT" = "longdash", "GPT-2" = "longdash",
+               "LSTM" = "solid", "BiLSTM" = "solid")
+plot <- ggplot(loss_df, aes(x=Step, y=EvalLoss, color=Model, linetype=Model)) +
+  geom_line(size=0.6, alpha=0.8) + labs(x="Steps", y="Evaluation Loss") +
+  scale_color_manual(values = colors) + scale_linetype_manual(values = linetypes) +
+  scale_x_continuous(breaks=c(0, 250000, 500000, 750000, 1000000),
+                     labels=c("0", "250K", "500K", "750K", "1M"), limits=c(0, 1000000)) +
+  theme(legend.key.size = unit(0.5, 'cm'),
+        legend.key.height = unit(0.5, 'cm'),
+        legend.key.width = unit(0.5, 'cm'),
+        legend.title = element_text(size=8),
+        legend.text = element_text(size=8))
+ggsave(file="tacl_data/figures/loss.pdf", plot=plot, width=4, height=2)
+rm(model, loss_df, lower_model, model_loss_df, colors, linetypes, plot)
+
+# BiLSTM AoA vs. frequency plot.
+aoa_file <- "tacl_data/lm_data/processed/bilstm_aoa.txt"
+lm_data_stats_file <- "tacl_data/lm_data/lm_data_stats.txt"
+lm_aoa_df <- get_lm_aoa_df(aoa_file, lm_data_stats_file=lm_data_stats_file)
+linear_reg <- lm(LmAoA ~ LmLogFreq, data=lm_aoa_df)
+coeffs <- coef(summary(linear_reg))[,1]
+plot <- ggplot(lm_aoa_df, aes(x=LmLogFreq, y=LmAoA)) +
+  theme_bw() + xlab("Training log-frequency") + ylab("BiLSTM AoA (steps, log10)") +
+  theme(axis.title.y = element_text(size = 10, hjust=1)) +
+  geom_point(size=1, alpha=0.1) +
+  geom_abline(intercept=coeffs[1], slope=coeffs[2], color="blue", alpha=0.65)
+ggsave(file="tacl_data/figures/bilstm_frequency.pdf", plot=plot, width=2, height=2)
+rm(aoa_file, lm_data_stats_file, lm_aoa_df, linear_reg, coeffs, plot)
+
+# Child AoA vs. frequency plot.
+child_aoa_file <- "tacl_data/child_data/child_aoa.tsv"
+childes_file <- "tacl_data/child_data/childes_eng-na.tsv"
+child_aoa_df <- get_child_aoa_df(child_aoa_file, childes_file=childes_file)
+linear_reg <- lm(ChildAoA ~ ChildLogFreq, data=child_aoa_df)
+coeffs <- coef(summary(linear_reg))[,1]
+plot <- ggplot(child_aoa_df, aes(x=ChildLogFreq, y=ChildAoA)) +
+  theme_bw() + xlab("CHILDES log-frequency") + ylab("Child AoA (months)") +
+  theme(axis.title.x = element_text(hjust=1)) +
+  geom_point(size=1, alpha=0.1) +
+  geom_abline(intercept=coeffs[1], slope=coeffs[2], color="blue", alpha=0.65) +
+  scale_x_continuous(limits=c(-6, 4)) + scale_y_continuous(limits=c(10, 35))
+ggsave(file="tacl_data/figures/child_frequency.pdf", plot=plot, width=2, height=2)
+rm(child_aoa_file, childes_file, child_aoa_df, linear_reg, coeffs, plot)
+
+# KL divergence plot for one model.
+model <- "BERT"
+lower_model <- str_replace(tolower(model), "-", "")
+lm_xent_df <- read.delim(paste("tacl_data/lm_data/", lower_model, "_xent.txt", sep=""),
+                               quote="", encoding="UTF-8")
+# Remember to make this unidirectional/bidirectional (ForwardBigramKL or BidirBigramKL).
+lm_xent_df <- lm_xent_df %>% dplyr::select(Steps, Loss, UniformKL, UnigramKL, BidirBigramKL)
+lm_xent_df <- setNames(lm_xent_df, c("Steps", "One-hot (loss)", "Uniform", "Unigram", "Bigram"))
+lm_xent_df <- gather(lm_xent_df, key = "KLType", value="KL", -Steps)
+colors <- c("One-hot (loss)" = "darkred", "Uniform" = "steelblue",
+            "Unigram" = "mediumseagreen", "Bigram" = "black")
+linetypes <- c("One-hot (loss)" = "dotdash", "Uniform" = "dotted",
+               "Unigram" = "solid", "Bigram" = "solid")
+plot <- ggplot(lm_xent_df, aes(x=log10(Steps), y=KL, color=KLType, linetype=KLType)) +
+  geom_line(size=0.75) +
+  labs(x=paste(model, " steps (log10)", sep=""), y="KL divergence") +
+  scale_color_manual(values = colors) +
+  scale_linetype_manual(values = linetypes) +
+  theme(legend.position="none")
+# To save just the legend.
+#   theme(legend.position = c(0.5, 0.5), legend.title=element_blank())
+# legend <- cowplot::get_legend(plot)
+# ggsave(file="tacl_data/figures/xent_legend.pdf", plot=legend, width=1.5, height=2)
+ggsave(file=paste("tacl_data/figures/", lower_model, "_xent.pdf", sep=""),
+       plot=plot, width=3, height=2)
+rm(model, lower_model, lm_xent_df, colors, linetypes, plot)
+
+```
+
