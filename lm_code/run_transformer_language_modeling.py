@@ -79,7 +79,7 @@ def main():
         last_checkpoint = get_last_checkpoint(training_args.output_dir)
         if last_checkpoint is None and len(os.listdir(training_args.output_dir)) > 0:
             raise ValueError(
-                f"Output directory ({training_args.output_dir}) already exists and is not empty. "
+                f"Output directory ({training_args.output_dir}) already exists and contains no checkpoints. "
                 "Use --overwrite_output_dir to overcome."
             )
         elif last_checkpoint is not None:
@@ -175,7 +175,8 @@ def main():
         if training_args.do_train else None
     )
     eval_dataset = (
-        get_dataset(data_args, tokenizer=tokenizer, evaluate=True)
+        get_dataset(data_args, tokenizer=tokenizer, evaluate=True,
+            is_iterable=data_args.eval_iterable)
         if training_args.do_eval
         else None
     )

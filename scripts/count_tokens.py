@@ -2,6 +2,14 @@
 Counts tokens in a text file of tokenized examples.
 Each line should be a space-separated list of integer token ids.
 Also computes token frequencies and mean sequence lengths.
+Sample usage:
+
+python3 count_tokens.py \
+--tokenizer="./sample_data/spm.model" \
+--input_file="./sample_data/train_tokenized.txt" \
+--output_file="./sample_data/lm_data_stats.txt" \
+--max_seq_len=512
+
 """
 
 from __future__ import unicode_literals
@@ -16,7 +24,7 @@ def create_parser():
     parser.add_argument('--input_file', default="")
     parser.add_argument('--tokenizer', default="")
     parser.add_argument('--output_file', default="output.txt")
-    parser.add_argument('--max_seq_len', type=int, default=128)
+    parser.add_argument('--max_seq_len', type=int, default=512)
     return parser
 
 def main(input_file, tokenizer, output_file, max_seq_len):

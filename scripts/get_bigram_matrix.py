@@ -1,6 +1,14 @@
 """
 Creates a vocab_size x vocab_size bigram matrix from the text file of tokenized
 examples. Each line should be a space-separated list of integer token ids.
+Sample usage:
+
+python3 get_bigram_matrix.py \
+--tokenizer="./sample_data/spm.model" \
+--input_file="./sample_data/train_tokenized.txt" \
+--output_file="./sample_data/bigram_counts.pt" \
+--max_seq_len=512
+
 """
 
 import codecs

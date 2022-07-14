@@ -177,11 +177,14 @@ def prepare_tokenized_examples(tokenized_examples, tokenizer, model_type):
     return inputs
 
 
-# Output the logits given examples (lists of token_ids).
-# Assumes one mask per example. Outputs tensor of shape n_examples x vocab_size.
-# Only considers the masked token.
-# Handles batching and example tensorizing.
-# model_type is bert, gpt2, lstm, or bilstm.
+"""
+Output the logits (tensor shape: n_examples, vocab_size) given examples
+(lists of token_ids). Assumes one mask token per example. Only outputs logits
+for the masked token. Handles batching and example tensorizing.
+The tokenizer should be loaded as in the main() function.
+The model_type is bert, gpt2, lstm, or bilstm.
+The model can be loaded using the load_single_model() function.
+"""
 def run_model(model, model_type, examples, batch_size, tokenizer):
     # Create batches.
     batches = []
@@ -286,7 +289,12 @@ def evaluate_tokens(model, model_type, token_data, tokenizer, outfile,
     return
 
 
-# Load one model.
+"""
+Loads a model from a directory (either a model directory or a checkpoint
+directory within the model directory).
+The config and tokenizer should be loaded as in the main() function.
+The model_type is bert, gpt2, lstm, or bilstm.
+"""
 def load_single_model(single_model_dir, model_type, config, tokenizer):
     print("Loading from directory: {}".format(single_model_dir))
     if model_type == "gpt2": # GPT2LMHeadModel.

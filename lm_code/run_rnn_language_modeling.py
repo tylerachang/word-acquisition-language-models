@@ -104,7 +104,7 @@ def main():
         last_checkpoint = get_last_checkpoint(training_args.output_dir)
         if last_checkpoint is None and len(os.listdir(training_args.output_dir)) > 0:
             raise ValueError(
-                f"Output directory ({training_args.output_dir}) already exists and is not empty. "
+                f"Output directory ({training_args.output_dir}) already exists and contains no checkpoints. "
                 "Use --overwrite_output_dir to overcome."
             )
         elif last_checkpoint is not None:
@@ -214,7 +214,7 @@ def main():
         if training_args.do_train else None
     )
     eval_dataset = (
-        get_dataset(data_args, tokenizer=tokenizer, evaluate=True)
+        get_dataset(data_args, tokenizer=tokenizer, evaluate=True, is_iterable=data_args.eval_iterable)
         if training_args.do_eval
         else None
     )
@@ -226,7 +226,7 @@ def main():
     train_dataloader = DataLoader(
         train_dataset,
         batch_size=training_args.train_batch_size, # Automatically computed from n_gpus and per_device batch size.
-        sampler=None, # Iterable dataset.
+        sampler=None if data_args.train_iterable else SequentialSampler(train_dataset),
         collate_fn=data_collator,
         drop_last=training_args.dataloader_drop_last,
         num_workers=training_args.dataloader_num_workers,
@@ -288,7 +288,7 @@ def main():
                 print("Evaluating step {}".format(training_step))
                 eval_dataloader = DataLoader(
                     eval_dataset,
-                    sampler=SequentialSampler(eval_dataset),
+                    sampler=None if data_args.eval_iterable else SequentialSampler(eval_dataset),
                     batch_size=training_args.eval_batch_size,
                     collate_fn=data_collator,
                     drop_last=training_args.dataloader_drop_last,

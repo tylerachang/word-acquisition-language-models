@@ -50,6 +50,7 @@ class DataTrainingArguments:
                           "Data should be pre-shuffled."
                           "If false, a line_by_line text dataset is assumed."},
     )
+    eval_iterable: bool = field(default=False)
     mlm_probability: float = field(
         default=0.15, metadata={"help": "Ratio of tokens to mask for masked language modeling loss"}
     )
