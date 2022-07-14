@@ -1,6 +1,9 @@
 # word-acquisition-language-models
 Code and data for the paper [Word Acquisition in Neural Language Models](https://arxiv.org/abs/2110.02406) (TACL 2021).
-Includes code for pre-training and evaluating surprisals in Transformer (BERT, GPT) and RNN (unidirectional and bidirectional LSTM) language models.
+Includes code for pre-training Transformer and RNN language models, including BERT and GPT models.
+
+<img src="walk_bert_child.png" alt="Acquisition of the word "walk" in BERT and children." width="70%" />
+
 Also contains code to analyze words' ages of acquisition in children and language models during pre-training.
 Last tested on Python 3.9.13, Pytorch 1.10.2, and Hugging Face Transformers 4.14.1.
 Data from the paper is in r_code/tacl_data.
