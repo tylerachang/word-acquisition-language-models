@@ -2,13 +2,13 @@
 Code and data for the paper [Word Acquisition in Neural Language Models](https://arxiv.org/abs/2110.02406) (TACL 2021).
 Includes code for pre-training and evaluating surprisals in Transformer (BERT, GPT) and RNN (unidirectional and bidirectional LSTM) language models.
 Also contains code to analyze words' ages of acquisition in children and language models during pre-training.
-Last tested on Python 3.9.13, Pytorch 1.10.2, and Hugging Face Transformers 4.14.1 (see requirements.txt).
-Data is in r_code/tacl_data.
+Last tested on Python 3.9.13, Pytorch 1.10.2, and Hugging Face Transformers 4.14.1.
+Data from the paper is in r_code/tacl_data.
 
 ## Training language models.
 This section contains instructions to train a language model from scratch.
-First, place your training and evaluation raw text files in the sample_data directory, with file names train_text.txt and eval_text.txt.
-Then, train a tokenizer on your training data:
+First, place training and evaluation raw text files in the sample_data directory, with file names train_text.txt and eval_text.txt.
+Then, train a tokenizer on the training data:
 <pre>
 python3 scripts/train_spm_tokenizer.py \
 --input_file="./sample_data/train_text.txt" \
