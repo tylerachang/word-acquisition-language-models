@@ -1,5 +1,5 @@
 # word-acquisition-language-models
-Code and data for the paper [Word Acquisition in Neural Language Models](https://arxiv.org/abs/2110.02406) (TACL 2021).
+Code and data for the paper [Word Acquisition in Neural Language Models](https://arxiv.org/abs/2110.02406) (TACL 2022).
 Includes code for pre-training Transformer and RNN language models, including BERT and GPT models.
 
 <img src="walk_bert_child.png" alt="Acquisition of the word &quot;walk&quot; in BERT and children." width="70%" />
@@ -152,10 +152,10 @@ Original data is in r_code/tacl_data.
 
 ## Citation.
 <pre>
-@article{chang-bergen-2021-word,
+@article{chang-bergen-2022-word,
   title={Word Acquisition in Neural Language Models},
   author={Tyler Chang and Benjamin Bergen},
   journal={Transactions of the Association for Computational Linguistics},
-  year={2021},
+  year={2022},
 }
 </pre>
