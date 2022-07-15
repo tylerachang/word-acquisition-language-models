@@ -1,0 +1,1 @@
+Language model training and evaluation raw text files should be placed here, with file names train_text.txt and eval_text.txt.
