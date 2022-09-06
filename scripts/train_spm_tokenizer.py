@@ -22,14 +22,19 @@ def create_parser():
     parser.add_argument('--vocab_size', type=int, required=True)
     parser.add_argument('--sample_size', type=int, default=10000000)
     parser.add_argument('--shuffle_input', default="true")
+    parser.add_argument('--large_corpus', default="true")
+    parser.add_argument('--num_threads', default=16)
     return parser
 
 def main(args):
     shuffle_input = args.shuffle_input == "true"
+    large_corpus = args.large_corpus == "true"
     spm.SentencePieceTrainer.train(input=args.input_file,
         model_prefix=args.output, vocab_size=args.vocab_size,
         input_sentence_size=args.sample_size,
-        shuffle_input_sentence=shuffle_input)
+        train_extremely_large_corpus=large_corpus,
+        shuffle_input_sentence=shuffle_input,
+        num_threads=args.num_threads)
 
 if __name__ == "__main__":
     parser = create_parser()
