@@ -18,6 +18,7 @@ from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data.dataset import Dataset, IterableDataset
 from filelock import FileLock
 from transformers import PreTrainedTokenizer, BatchEncoding
+from tqdm import tqdm
 
 
 # Text dataset that iterates through a file.
@@ -88,12 +89,14 @@ class IterableTextDataset(IterableDataset):
         self.sep_token_id = sep_token_id
 
         # Initially get total num_examples.
+        print("Counting examples in train file. This can be slow.")
         example_count = 0
         infile = codecs.open(file_path, 'rb', encoding='utf-8')
-        for line in infile:
+        for line in tqdm(infile):
             example_count += 1
         self.num_examples = example_count
         infile.close()
+        print("Finished counting.")
 
     def __iter__(self):
         return self.ExampleIterator(self.input_filepath, self.block_size,
