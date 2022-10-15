@@ -229,6 +229,8 @@ class DataCollatorForLanguageModeling:
         if self.mlm:
             inputs, labels = self.mask_tokens(batch)
         else:
+            # Note: for GPT-2, the inputs/labels are automatically shifted
+            # inside the model for autoregressive language modeling.
             inputs = batch
             labels = batch.clone().detach()
             if self.tokenizer.pad_token_id is not None:

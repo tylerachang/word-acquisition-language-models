@@ -205,6 +205,12 @@ def main():
             checkpoint = model_args.model_name_or_path
         else:
             checkpoint = None
+        # If training from scratch, save the randomly initialized model, tokenizer, and config.
+        if checkpoint is None and training_args.save_strategy != "no":
+            trainer.save_model(os.path.join(training_args.output_dir, "checkpoint-0"))
+            tokenizer.save_pretrained(training_args.output_dir)
+            config.save_pretrained(training_args.output_dir)
+        # Train.
         train_result = trainer.train(resume_from_checkpoint=checkpoint)
         trainer.save_model()
 
