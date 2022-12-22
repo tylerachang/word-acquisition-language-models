@@ -1,8 +1,11 @@
 # Utils for Transformer and RNN language modeling.
 
+import numpy as np
+
 from dataclasses import dataclass, field
 from typing import Optional
 from transformers import PreTrainedTokenizer
+from transformers import TrainingArguments, TrainerState, TrainerControl, TrainerCallback
 
 from dataset_classes import (
     LineByLineTextDataset,
@@ -65,6 +68,10 @@ class DataTrainingArguments:
     overwrite_cache: bool = field(
         default=False, metadata={"help": "Overwrite the cached training and evaluation sets"}
     )
+    overwrite_save_strategy: str = field(
+        default="",
+        metadata={"help": "Can set to exponential save strategy (see run_transformer_language_modeling.py)."},
+    )
 
 
 def get_dataset(
@@ -79,3 +86,54 @@ def get_dataset(
                                    pad_token_id=tokenizer.pad_token_id, sep_token_id=tokenizer.sep_token_id)
     else:
         return LineByLineTextDataset(tokenizer=tokenizer, file_path=file_path, block_size=args.block_size)
+
+
+"""
+Callback to overwrite the save steps.
+E.g. to save every exp_base^(scalar*n)+constant steps.
+This should be passed through the trainer callbacks parameter.
+One of the following must be called after initialization:
+set_checkpoint_rates()
+"""
+class SaveStepsCallback(TrainerCallback):
+    def __init__(self):
+        # This should be set with one of the functions below.
+        self.checkpoint_steps = None
+
+    def get_steps_from_rates(self, s0, s1, t1, max_steps):
+        def get_step(n):
+            term1 = s0 * t1 / (s1 - s0)
+            exponent = (n-1) * (s1 - s0) / t1
+            term2 = np.exp(exponent) - 1.0
+            return term1 * term2
+        save_steps = []
+        save_step = 0
+        n = 1
+        while save_step <= max_steps:
+            save_steps.append(save_step)
+            # Increment.
+            n += 1
+            save_step = int(np.round(get_step(n), 0))
+        return save_steps
+
+    # Set checkpoint steps such that there are s0 steps per save at step 0,
+    # and s1 steps per save at step t1. This results in an exponential function
+    # for steps vs. saves.
+    def set_checkpoint_rates(self, s0, s1, t1, max_steps):
+        self.checkpoint_steps = self.get_steps_from_rates(s0, s1, t1, max_steps)
+
+    # Function override.
+    def on_step_end(self, args: TrainingArguments, state: TrainerState, control: TrainerControl, **kwargs):
+        if self.checkpoint_steps is None:
+            print("Warning: checkpoint steps not initialized for SaveStepsCallback.")
+            return control
+        is_save_step = self.checkpoint_steps and state.global_step in self.checkpoint_steps
+        # Evaluate on these steps.
+        if is_save_step:
+            control.should_evaluate = True
+        # Save only on these steps.
+        if is_save_step:
+            control.should_save = True
+        else:
+            control.should_save = False
+        return control

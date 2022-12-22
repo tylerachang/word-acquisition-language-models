@@ -8,6 +8,7 @@ See readme for sample usage.
 import logging
 import math
 import os
+import torch
 from transformers import (
     AutoConfig,
     AutoModelForCausalLM,
@@ -29,6 +30,7 @@ from lm_utils import (
     ModelArguments,
     DataTrainingArguments,
     get_dataset,
+    SaveStepsCallback
 )
 
 logger = logging.getLogger(__name__)
@@ -187,6 +189,19 @@ def main():
         mlm_probability=data_args.mlm_probability,
     )
 
+    callbacks = None
+    if data_args.overwrite_save_strategy == "exponential":
+        # Default values.
+        # 100 steps per save at step 0.
+        # 25K steps per save at step 1M.
+        s0 = 100
+        s1 = 25000
+        t1 = 1000000
+        # Create callback.
+        save_steps_callback = SaveStepsCallback()
+        save_steps_callback.set_checkpoint_rates(s0, s1, t1, training_args.max_steps)
+        callbacks = [save_steps_callback]
+
     # Initialize our Trainer.
     trainer = Trainer(
         model=model,
@@ -194,7 +209,8 @@ def main():
         data_collator=data_collator,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
-        compute_metrics=None
+        compute_metrics=None,
+        callbacks=callbacks
     )
 
     # Training.
