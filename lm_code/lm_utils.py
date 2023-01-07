@@ -103,12 +103,12 @@ class SaveStepsCallback(TrainerCallback):
     def get_steps_from_rates(self, s0, s1, t1, max_steps):
         def get_step(n):
             term1 = s0 * t1 / (s1 - s0)
-            exponent = (n-1) * (s1 - s0) / t1
+            exponent = n * (s1 - s0) / t1
             term2 = np.exp(exponent) - 1.0
             return term1 * term2
         save_steps = []
         save_step = 0
-        n = 1
+        n = 0
         while save_step <= max_steps:
             save_steps.append(save_step)
             # Increment.
