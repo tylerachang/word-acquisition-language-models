@@ -133,39 +133,45 @@ def main():
         print("Attempting to use local sentencepiece model file as tokenizer.")
         tokenizer = AlbertTokenizer.from_pretrained(tokenizer_path)
 
-    # Overwrite special token ids in the configs.
-    if config.model_type == "bert":
-        config.pad_token_id = tokenizer.pad_token_id
-    elif config.model_type == "gpt2":
-        config.bos_token_id = tokenizer.cls_token_id
-        config.eos_token_id = tokenizer.sep_token_id
+    # Overwrite special token ids in the configs based on the actual tokenizer ids.
+    # This updated config will be saved in the output model directory.
+    config.bos_token_id = tokenizer.cls_token_id
+    config.eos_token_id = tokenizer.sep_token_id
+    config.pad_token_id = tokenizer.pad_token_id
 
     # Load models.
     if model_args.model_name_or_path:
-        if config.model_type == "gpt2": # GPT2LMHeadModel.
-            model = AutoModelForCausalLM.from_pretrained(
+        if config.model_type in ["bert"]: # BertForMaskedLM.
+            model = AutoModelForMaskedLM.from_pretrained(
                 model_args.model_name_or_path,
                 config=config,
             )
-        else: # BertForMaskedLM.
-            model = AutoModelForMaskedLM.from_pretrained(
+        else: # GPT2LMHeadModel or other autoregressive model.
+            model = AutoModelForCausalLM.from_pretrained(
                 model_args.model_name_or_path,
                 config=config,
             )
     else:
         logger.info("Training new model from scratch")
-        if config.model_type == "gpt2":
-            model = AutoModelForCausalLM.from_config(config)
-        else:
+        if config.model_type in ["bert"]:
             model = AutoModelForMaskedLM.from_config(config)
+        else:
+            model = AutoModelForCausalLM.from_config(config)
 
     model.resize_token_embeddings(len(tokenizer))
+
+    # Zero and freeze token_type_embeddings for BERT if there is just one token
+    # type.
+    if config.model_type == "bert" and config.type_vocab_size == 1:
+        model.bert.embeddings.token_type_embeddings.weight.data.zero_()
+        model.bert.embeddings.token_type_embeddings.weight.requires_grad = False
 
     # Print total model parameters.
     # Note that usually output word embeddings are tied to input word embeddings (to save parameters).
     num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print("NUM TRAINABLE MODEL PARAMETERS: {}".format(num_params))
 
+    # Set the max sequence length.
     if config.model_type == "gpt2":
         data_args.block_size = config.n_positions
     else:
@@ -185,7 +191,7 @@ def main():
 
     data_collator = DataCollatorForLanguageModeling(
         tokenizer=tokenizer,
-        mlm=config.model_type=="bert",
+        mlm=(config.model_type in ["bert"]),
         mlm_probability=data_args.mlm_probability,
     )
 

@@ -28,6 +28,7 @@ from tqdm import tqdm
 # If run_transformer_language_modeling.py is run with python -m torch.distributed.launch --nproc_per_node N_GPUS,
 # then the different devices are automatically handled. One iterable is created
 # for each device, but the iterables are coordinated.
+# See use DistributedSampler in Hugging Face trainer.py.
 # This means that the iterable does not need to account for multiple workers, so we
 # can ignore: https://pytorch.org/docs/stable/data.html#torch.utils.data.IterableDataset
 class IterableTextDataset(IterableDataset):
