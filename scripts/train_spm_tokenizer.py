@@ -29,6 +29,10 @@ def create_parser():
 def main(args):
     shuffle_input = args.shuffle_input == "true"
     large_corpus = args.large_corpus == "true"
+    # See https://github.com/google/sentencepiece/blob/master/doc/options.md
+    # for additional options.
+    # Note: character_coverage defaults to 0.9995. For English, this usually
+    # removes accented characters.
     spm.SentencePieceTrainer.train(input=args.input_file,
         model_prefix=args.output, vocab_size=args.vocab_size,
         input_sentence_size=args.sample_size,

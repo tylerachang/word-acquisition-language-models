@@ -5,7 +5,7 @@ Includes code for pre-training Transformer and RNN language models, including BE
 <img src="walk_bert_child.png" alt="Acquisition of the word &quot;walk&quot; in BERT and children." width="70%" />
 
 Also contains code to analyze words' ages of acquisition in children and language models during pre-training.
-Last tested on Python 3.9.13, Pytorch 1.10.2, and Hugging Face Transformers 4.14.1.
+Last tested on Python 3.7, Pytorch 1.12, and Hugging Face Transformers 4.18.0.
 Data from the paper is in r_code/tacl_data.
 
 ## Training language models.
@@ -18,11 +18,17 @@ python3 scripts/train_spm_tokenizer.py \
 --output="./sample_data/spm" \
 --vocab_size=30000
 </pre>
+Convert into a Hugging Face tokenizer:
+<pre>
+python3 scripts/convert_spm_to_hf_tokenizer.py \
+--input_file="./sample_data/spm.model" \
+--output_dir="./sample_data/hf_tokenizer"
+</pre>
 Then, tokenize the training dataset.
 In this example, we concatenate each pair of lines.
 <pre>
 python3 scripts/tokenize_dataset.py \
---tokenizer="./sample_data/spm.model" \
+--tokenizer="./sample_data/hf_tokenizer" \
 --input_file="./sample_data/train_text.txt" \
 --output_file="./sample_data/train_tokenized.txt" \
 --max_segments=2 --max_seq_len=-1
@@ -30,7 +36,7 @@ python3 scripts/tokenize_dataset.py \
 Repeat for the evaluation dataset.
 <pre>
 python3 scripts/tokenize_dataset.py \
---tokenizer="./sample_data/spm.model" \
+--tokenizer="./sample_data/hf_tokenizer" \
 --input_file="./sample_data/eval_text.txt" \
 --output_file="./sample_data/eval_tokenized.txt" \
 --max_segments=2 --max_seq_len=-1
@@ -43,7 +49,7 @@ The code below should be run with GPU(s) unless the config specifies a fairly sm
 To train BERT:
 <pre>
 python3 lm_code/run_transformer_language_modeling.py \
---tokenizer_name="./sample_data/spm.model" \
+--tokenizer_name="./sample_data/hf_tokenizer" \
 --config_name="./lm_configs/bert_base_config.json" \
 --do_train --do_eval \
 --train_data_file="./sample_data/train_tokenized.txt" \
@@ -67,7 +73,7 @@ To train GPT-2, replace the following options:
 To train a forward RNN (LSTM):
 <pre>
 python3 lm_code/run_rnn_language_modeling.py \
---tokenizer_name="./sample_data/spm.model" \
+--tokenizer_name="./sample_data/hf_tokenizer" \
 --config_name="./lm_configs/rnn_unidirectional_config.json" \
 --do_train --do_eval \
 --train_data_file="./sample_data/train_tokenized.txt" \
