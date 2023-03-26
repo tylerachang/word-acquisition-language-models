@@ -129,7 +129,7 @@ class SaveStepsCallback(TrainerCallback):
             return control
         is_save_step = self.checkpoint_steps and state.global_step in self.checkpoint_steps
         # Evaluate on these steps.
-        if is_save_step:
+        if is_save_step and args.do_eval:
             control.should_evaluate = True
         # Save only on these steps.
         if is_save_step:

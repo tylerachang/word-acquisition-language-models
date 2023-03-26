@@ -158,6 +158,7 @@ def main():
         else:
             model = AutoModelForCausalLM.from_config(config)
 
+    # By default, weights are tied between the input and output token embeddings.
     model.resize_token_embeddings(len(tokenizer))
 
     # Zero and freeze token_type_embeddings for BERT if there is just one token
