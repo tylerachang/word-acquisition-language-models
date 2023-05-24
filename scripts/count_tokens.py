@@ -17,6 +17,7 @@ from __future__ import unicode_literals
 import codecs
 import argparse
 import sentencepiece as spm
+from transformers import AutoTokenizer
 from collections import Counter
 
 def create_parser():
@@ -29,12 +30,23 @@ def create_parser():
 
 def main(input_file, tokenizer, output_file, max_seq_len):
     # Load words.
-    sp = spm.SentencePieceProcessor()
-    sp.load(tokenizer)
-    tokens = dict()
-    for token_id in range(len(sp)):
-        token = sp.id_to_piece(token_id)
-        tokens[token_id] = token
+    if tokenizer.endswith('.model'):
+        # SentencePiece model.
+        sp = spm.SentencePieceProcessor()
+        sp.load(tokenizer)
+        tokens = dict()
+        for token_id in range(len(sp)):
+            token = sp.id_to_piece(token_id)
+            tokens[token_id] = token
+        vocab_size = len(sp)
+    else:
+        # Hugging Face tokenizer.
+        tok = AutoTokenizer.from_pretrained(tokenizer, cache_dir='hf_cache')
+        tokens = dict()
+        for token_id in range(len(tok)):
+            token = tok.decode(token_id)
+            tokens[token_id] = token
+        vocab_size = len(tok) # Including special tokens.
 
     # Count tokens.
     infile = codecs.open(input_file, 'rb', encoding='utf-8')
@@ -50,7 +62,7 @@ def main(input_file, tokenizer, output_file, max_seq_len):
         if len(example_pair) > max_seq_len:
             example_pair = example_pair[:max_seq_len]
         for idx, token_id in enumerate(example_pair):
-            if token_id >= len(sp):
+            if token_id >= vocab_size:
                 continue
             token_counts[tokens[token_id]] += 1
             seq_len_total[tokens[token_id]] += len(example_pair)
