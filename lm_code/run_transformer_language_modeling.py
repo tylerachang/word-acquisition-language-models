@@ -138,6 +138,8 @@ def main():
     config.bos_token_id = tokenizer.cls_token_id
     config.eos_token_id = tokenizer.sep_token_id
     config.pad_token_id = tokenizer.pad_token_id
+    # Set the vocab_size based on the tokenizer.
+    config.vocab_size = len(tokenizer)
 
     # Load models.
     if model_args.model_name_or_path:
