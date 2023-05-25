@@ -16,6 +16,7 @@ from transformers import (
     AutoTokenizer,
     AlbertTokenizer,
     HfArgumentParser,
+    IntervalStrategy,
     PreTrainedTokenizer,
     Trainer,
     TrainingArguments,
@@ -231,7 +232,7 @@ def main():
         else:
             checkpoint = None
         # If training from scratch, save the randomly initialized model, tokenizer, and config.
-        if checkpoint is None and training_args.save_strategy != "no":
+        if checkpoint is None and training_args.save_strategy != IntervalStrategy.NO:
             trainer.save_model(os.path.join(training_args.output_dir, "checkpoint-0"))
             tokenizer.save_pretrained(training_args.output_dir)
             config.save_pretrained(training_args.output_dir)
