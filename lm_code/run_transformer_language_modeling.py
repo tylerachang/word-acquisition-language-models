@@ -76,6 +76,12 @@ def main():
             "or remove the --do_eval argument."
         )
 
+    # Check if model already exists.
+    final_model_path = os.path.join(training_args.output_dir, 'pytorch_model.bin')
+    if os.path.isdir(training_args.output_dir) and os.path.isfile(final_model_path):
+        print('Model already found: {}'.format(final_model_path))
+        return
+
     # Detecting last checkpoint.
     last_checkpoint = None
     if os.path.isdir(training_args.output_dir) and training_args.do_train and not training_args.overwrite_output_dir:
