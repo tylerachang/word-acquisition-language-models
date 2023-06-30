@@ -32,6 +32,10 @@ class ModelArguments:
     cache_dir: Optional[str] = field(
         default=None, metadata={"help": "Where do you want to store the pretrained models downloaded from s3"}
     )
+    override_vocabsize: int = field(
+        default=-1,
+        metadata={"help": "Can override the vocab size in the model config. Otherwise, sets to the tokenizer length."},
+    )
 
 
 @dataclass
@@ -72,6 +76,10 @@ class DataTrainingArguments:
         default="",
         metadata={"help": "Can set to exponential save strategy (see run_transformer_language_modeling.py)."},
     )
+    override_n_examples: int = field(
+        default=-1,
+        metadata={"help": "Can set this to avoid having to count through the training dataset at the beginning."},
+    )
 
 
 def get_dataset(
@@ -83,7 +91,8 @@ def get_dataset(
     file_path = args.eval_data_file if evaluate else args.train_data_file
     if is_iterable:
         return IterableTextDataset(file_path=file_path, block_size=args.block_size,
-                                   pad_token_id=tokenizer.pad_token_id, sep_token_id=tokenizer.sep_token_id)
+                                   pad_token_id=tokenizer.pad_token_id, sep_token_id=tokenizer.sep_token_id,
+                                   n_examples=args.override_n_examples)
     else:
         return LineByLineTextDataset(tokenizer=tokenizer, file_path=file_path, block_size=args.block_size)
 

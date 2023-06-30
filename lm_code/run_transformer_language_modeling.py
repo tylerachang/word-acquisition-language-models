@@ -146,7 +146,10 @@ def main():
     config.eos_token_id = tokenizer.sep_token_id
     config.pad_token_id = tokenizer.pad_token_id
     # Set the vocab_size based on the tokenizer.
-    config.vocab_size = len(tokenizer)
+    if model_args.override_vocabsize > 0:
+        config.vocab_size = model_args.override_vocabsize
+    else:
+        config.vocab_size = len(tokenizer)
 
     # Load models.
     if model_args.model_name_or_path:

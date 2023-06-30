@@ -89,6 +89,7 @@ class IterableTextDataset(IterableDataset):
         block_size: int,
         pad_token_id: int,
         sep_token_id: int,
+        n_examples: int = -1,
     ):
         super(IterableTextDataset).__init__()
         assert os.path.isfile(file_path), f"Input file path {file_path} not found"
@@ -98,14 +99,17 @@ class IterableTextDataset(IterableDataset):
         self.sep_token_id = sep_token_id
 
         # Initially get total num_examples.
-        print("Counting examples in train file. This can be slow.")
-        example_count = 0
-        infile = codecs.open(file_path, 'rb', encoding='utf-8')
-        for line in tqdm(infile):
-            example_count += 1
-        infile.close()
-        self.num_examples = example_count
-        print("Finished counting: {} examples.".format(example_count))
+        if n_examples > 0:
+            self.num_examples = n_examples
+        else:
+            print("Counting examples in train file. This can be slow.")
+            example_count = 0
+            infile = codecs.open(file_path, 'rb', encoding='utf-8')
+            for line in tqdm(infile):
+                example_count += 1
+            infile.close()
+            self.num_examples = example_count
+            print("Finished counting: {} examples.".format(example_count))
 
     def __iter__(self):
         return self.ExampleIterator(self.input_filepath, self.block_size,
