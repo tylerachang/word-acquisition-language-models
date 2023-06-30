@@ -89,10 +89,11 @@ def get_dataset(
     is_iterable: bool = False,
 ):
     file_path = args.eval_data_file if evaluate else args.train_data_file
+    n_examples = -1 if evaluate else args.override_n_examples
     if is_iterable:
         return IterableTextDataset(file_path=file_path, block_size=args.block_size,
                                    pad_token_id=tokenizer.pad_token_id, sep_token_id=tokenizer.sep_token_id,
-                                   n_examples=args.override_n_examples)
+                                   n_examples=n_examples)
     else:
         return LineByLineTextDataset(tokenizer=tokenizer, file_path=file_path, block_size=args.block_size)
 
