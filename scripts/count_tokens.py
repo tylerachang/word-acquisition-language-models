@@ -44,7 +44,7 @@ def main(input_file, tokenizer, output_file, max_seq_len):
         tok = AutoTokenizer.from_pretrained(tokenizer, cache_dir='hf_cache')
         tokens = dict()
         for token_id in range(len(tok)):
-            token = tok.decode(token_id)
+            token = tok.convert_ids_to_tokens(token_id)
             tokens[token_id] = token
         vocab_size = len(tok) # Including special tokens.
 
