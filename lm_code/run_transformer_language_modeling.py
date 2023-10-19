@@ -220,6 +220,11 @@ def main():
         save_steps_callback = SaveStepsCallback()
         save_steps_callback.set_checkpoint_rates(s0, s1, t1, training_args.max_steps)
         callbacks = [save_steps_callback]
+    if data_args.overwrite_save_strategy == "list":
+        checkpoint_steps = [0]
+        save_steps_callback = SaveStepsCallback()
+        save_steps_callback.set_checkpoint_steps(checkpoint_steps)
+        callbacks = [save_steps_callback]
 
     # Initialize our Trainer.
     trainer = Trainer(

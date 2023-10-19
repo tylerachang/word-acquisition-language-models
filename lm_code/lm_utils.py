@@ -132,6 +132,10 @@ class SaveStepsCallback(TrainerCallback):
     def set_checkpoint_rates(self, s0, s1, t1, max_steps):
         self.checkpoint_steps = self.get_steps_from_rates(s0, s1, t1, max_steps)
 
+    # Set checkpoint steps to a list of ints.
+    def set_checkpoint_steps(self, checkpoint_steps):
+        self.checkpoint_steps = checkpoint_steps
+
     # Function override.
     def on_step_end(self, args: TrainingArguments, state: TrainerState, control: TrainerControl, **kwargs):
         if self.checkpoint_steps is None:
